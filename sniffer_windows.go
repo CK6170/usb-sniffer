@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -93,13 +94,18 @@ type Sniffer struct {
 	display *Display
 	closed  atomic.Int32
 	pktCh   chan Packet
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 func NewSniffer(cfg Config) (*Sniffer, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Sniffer{
 		cfg:     cfg,
 		display: NewDisplay(cfg.Color),
 		pktCh:   make(chan Packet, 256),
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	if !cfg.Silent {
@@ -212,7 +218,7 @@ func (s *Sniffer) runUSBPcap(devs []string) error {
 			dev := dev
 			started++
 			go func() {
-				errCh <- RunUSBPcapCMD(cmdExe, dev, isFTDI, targetDevice, s.cfg.Verbose, s.pktCh)
+				errCh <- RunUSBPcapCMD(s.ctx, cmdExe, dev, isFTDI, targetDevice, s.cfg.Verbose, s.pktCh)
 			}()
 		}
 		for i := 0; i < started; i++ {
@@ -240,7 +246,7 @@ func (s *Sniffer) runUSBPcap(devs []string) error {
 		}
 		started++
 		go func() {
-			err := r.ReadPackets(targetDevice, s.cfg.Verbose, s.pktCh)
+			err := r.ReadPackets(s.ctx, targetDevice, s.cfg.Verbose, s.pktCh)
 			r.Close()
 			errCh <- err
 		}()
@@ -285,6 +291,7 @@ func (s *Sniffer) runETW() error {
 
 func (s *Sniffer) Close() {
 	if s.closed.CompareAndSwap(0, 1) {
+		s.cancel() // kills USBPcapCMD.exe subprocess and cancels ETW
 		if s.session != nil {
 			s.session.close()
 		}

@@ -13,6 +13,7 @@ package main
 // Install USBPcap: https://desowin.org/usbpcap/
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ func transferName(t uint8) string {
 
 // parsePcapStream reads a USBPcap pcap stream.
 // verbose=true prints every USB packet (useful for diagnosing "no data").
-func parsePcapStream(r io.Reader, isFTDI bool, targetDevice uint16, verbose bool, out chan<- Packet) error {
+func parsePcapStream(ctx context.Context, r io.Reader, isFTDI bool, targetDevice uint16, verbose bool, out chan<- Packet) error {
 	ghdr := make([]byte, 24) // pcap global header is 24 bytes
 	if _, err := io.ReadFull(r, ghdr); err != nil {
 		return fmt.Errorf("pcap global header: %w", err)
@@ -195,11 +196,16 @@ func parsePcapStream(r io.Reader, isFTDI bool, targetDevice uint16, verbose bool
 		if isIN {
 			dir = DirIn
 		}
-		out <- Packet{
+		pkt := Packet{
 			Time:   time.Unix(int64(tsSec), int64(tsUsec)*1000),
 			Dir:    dir,
 			Data:   payload,
 			Source: fmt.Sprintf("USB bus=%d dev=%d ep=0x%02x", bus, device, endpoint),
+		}
+		select {
+		case out <- pkt:
+		case <-ctx.Done():
+			return nil // sniffer was stopped
 		}
 	}
 }
@@ -227,9 +233,10 @@ func FindUSBPcapCMD() string {
 
 // RunUSBPcapCMD spawns USBPcapCMD.exe for one device and parses its pcap stdout.
 // Blocks until the command exits or an unrecoverable error occurs.
-func RunUSBPcapCMD(exe, dev string, isFTDI bool, targetDevice uint16, verbose bool, out chan<- Packet) error {
+// Cancelling ctx kills the subprocess immediately.
+func RunUSBPcapCMD(ctx context.Context, exe, dev string, isFTDI bool, targetDevice uint16, verbose bool, out chan<- Packet) error {
 	// -d device  -o - (stdout)  -b snaplen  -A (all devices)
-	cmd := exec.Command(exe, "-d", dev, "-o", "-", "-b", "65535", "-A")
+	cmd := exec.CommandContext(ctx, exe, "-d", dev, "-o", "-", "-b", "65535", "-A")
 	cmd.Stderr = os.Stderr
 
 	stdout, err := cmd.StdoutPipe()
@@ -241,7 +248,7 @@ func RunUSBPcapCMD(exe, dev string, isFTDI bool, targetDevice uint16, verbose bo
 	}
 	defer cmd.Wait()
 
-	return parsePcapStream(stdout, isFTDI, targetDevice, verbose, out)
+	return parsePcapStream(ctx, stdout, isFTDI, targetDevice, verbose, out)
 }
 
 // ─── Strategy 2: direct overlapped API ───────────────────────────────────────
@@ -321,8 +328,8 @@ func (r *USBPcapReader) sysRead(buf []byte) (int, error) {
 }
 
 // ReadPackets wraps the overlapped reader as an io.Reader for parsePcapStream.
-func (r *USBPcapReader) ReadPackets(targetDevice uint16, verbose bool, out chan<- Packet) error {
-	return parsePcapStream(r, r.isFTDI, targetDevice, verbose, out)
+func (r *USBPcapReader) ReadPackets(ctx context.Context, targetDevice uint16, verbose bool, out chan<- Packet) error {
+	return parsePcapStream(ctx, r, r.isFTDI, targetDevice, verbose, out)
 }
 
 // Read implements io.Reader using overlapped I/O.
