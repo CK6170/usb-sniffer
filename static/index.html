@@ -180,6 +180,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .hex-bytes  { color: var(--text); }
 .hex-sep    { color: var(--border); }
 .hex-ascii  { color: var(--purple); }
+.hex-ctrl   { color: var(--orange); font-size: 9.5px; font-weight: 600;
+              letter-spacing: -.02em; }
 
 /* search highlight */
 .pkt.hidden { display: none; }
@@ -220,6 +222,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 
   <button class="toggle-btn active" id="btn-autoscroll" title="Auto-scroll to newest packet">&#x2193; Auto-scroll</button>
   <button class="toggle-btn" id="btn-pause" title="Pause display (capture continues)">&#x23F8; Pause</button>
+  <button class="toggle-btn" id="btn-ctrlnames" title="Show ASCII control character names (e.g. &lt;ESC&gt;, &lt;CR&gt;, &lt;LF&gt;)">&#x2328; Ctrl Names</button>
   <button id="btn-clear" title="Clear packet list">&#x1F5D1; Clear</button>
 
   <div class="toolbar-sep"></div>
@@ -279,12 +282,41 @@ const stIn         = document.getElementById('st-in');
 const stOut        = document.getElementById('st-out');
 const stShown      = document.getElementById('st-shown');
 
+// ── Control character name table (ASCII 0x00–0x1F + 0x7F) ─────────────────
+const CTRL_NAMES = [
+  'NUL','SOH','STX','ETX','EOT','ENQ','ACK','BEL',
+  'BS', 'HT', 'LF', 'VT', 'FF', 'CR', 'SO', 'SI',
+  'DLE','DC1','DC2','DC3','DC4','NAK','SYN','ETB',
+  'CAN','EM', 'SUB','ESC','FS', 'GS', 'RS', 'US'
+];
+let showCtrlNames = false;
+
 // ── Hex formatting ─────────────────────────────────────────────────────────
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return bytes;
+}
+
+// Returns HTML span for one byte in the ASCII column.
+function byteToAsciiHtml(b) {
+  if (b >= 32 && b < 127) return escHtml(String.fromCharCode(b));
+  if (showCtrlNames) {
+    const name = b < 32 ? CTRL_NAMES[b] : (b === 127 ? 'DEL' : null);
+    if (name) return `<span class="hex-ctrl">&lt;${name}&gt;</span>`;
+  }
+  return '.';
+}
+
+// Returns plain text for one byte in the ASCII column (export).
+function byteToAsciiPlain(b) {
+  if (b >= 32 && b < 127) return String.fromCharCode(b);
+  if (showCtrlNames) {
+    const name = b < 32 ? CTRL_NAMES[b] : (b === 127 ? 'DEL' : null);
+    if (name) return `<${name}>`;
+  }
+  return '.';
 }
 
 function formatHexDump(bytes) {
@@ -294,10 +326,10 @@ function formatHexDump(bytes) {
     const addr = i.toString(16).padStart(8, '0');
     const h1 = Array.from(row.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
     const h2 = Array.from(row.slice(8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    const ascii = Array.from(row).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+    const asciiHtml = Array.from(row).map(byteToAsciiHtml).join('');
     const h1p = h1.padEnd(23, ' ');
     const h2p = h2.padEnd(23, ' ');
-    rows.push(`<span class="hex-addr">${addr}</span>  <span class="hex-bytes">${h1p}  ${h2p}</span>  <span class="hex-sep">|</span><span class="hex-ascii">${escHtml(ascii)}</span><span class="hex-sep">|</span>`);
+    rows.push(`<span class="hex-addr">${addr}</span>  <span class="hex-bytes">${h1p}  ${h2p}</span>  <span class="hex-sep">|</span><span class="hex-ascii">${asciiHtml}</span><span class="hex-sep">|</span>`);
   }
   return rows.join('\n');
 }
@@ -309,10 +341,21 @@ function formatHexDumpPlain(bytes) {
     const addr = i.toString(16).padStart(8, '0');
     const h1 = Array.from(row.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
     const h2 = Array.from(row.slice(8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    const ascii = Array.from(row).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+    const ascii = Array.from(row).map(byteToAsciiPlain).join('');
     rows.push(`${addr}  ${h1.padEnd(23)}  ${h2.padEnd(23)}  |${ascii}|`);
   }
   return rows.join('\n');
+}
+
+// Re-render hex dumps of all packets already in the DOM.
+function rerenderHexDumps() {
+  packetList.querySelectorAll('.pkt').forEach(el => {
+    const idx = parseInt(el.dataset.index, 10);
+    if (idx >= 0 && idx < packets.length) {
+      const pre = el.querySelector('.hex-dump');
+      if (pre) pre.innerHTML = formatHexDump(b64ToBytes(packets[idx].b64));
+    }
+  });
 }
 
 function escHtml(s) {
@@ -544,6 +587,12 @@ btnPause.addEventListener('click', () => {
 btnAutoscroll.addEventListener('click', () => {
   autoScroll = !autoScroll;
   btnAutoscroll.classList.toggle('active', autoScroll);
+});
+
+document.getElementById('btn-ctrlnames').addEventListener('click', (e) => {
+  showCtrlNames = !showCtrlNames;
+  e.currentTarget.classList.toggle('active', showCtrlNames);
+  rerenderHexDumps();
 });
 
 // Direction filter
