@@ -57,9 +57,11 @@ type Packet struct {
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 type Config struct {
-	Port    string
-	Verbose bool
-	Color   bool
+	Port     string
+	Verbose  bool
+	Color    bool
+	Silent   bool           // suppress all console output
+	OnPacket func(Packet)   // if set, called instead of printing to terminal
 }
 
 // ─── Package-level ETW callback ───────────────────────────────────────────────
@@ -100,28 +102,35 @@ func NewSniffer(cfg Config) (*Sniffer, error) {
 		pktCh:   make(chan Packet, 256),
 	}
 
-	// Print detected ports.
-	if cfg.Port != "" {
-		info, err := FindCOMPort(cfg.Port)
-		if err != nil {
+	if !cfg.Silent {
+		// Print detected ports.
+		if cfg.Port != "" {
+			info, err := FindCOMPort(cfg.Port)
+			if err != nil {
+				return nil, fmt.Errorf("cannot find %s: %w", cfg.Port, err)
+			}
+			fmt.Printf("Found: %s  —  %s\n", info.Port, info.FriendlyName)
+			fmt.Printf("       HW ID:    %s\n", info.HardwareID)
+			fmt.Printf("       Instance: %s\n\n", info.InstanceID)
+		} else {
+			ports, _ := EnumerateCOMPorts()
+			var lines []string
+			for _, p := range ports {
+				if isUSBDevice(p.HardwareID) {
+					lines = append(lines, fmt.Sprintf("  %-6s  %s", p.Port, p.FriendlyName))
+				}
+			}
+			if len(lines) > 0 {
+				fmt.Println("USB serial ports detected:")
+				fmt.Println(strings.Join(lines, "\n"))
+			}
+			fmt.Println()
+		}
+	} else if cfg.Port != "" {
+		// Silent mode: still need to validate port exists, but don't print.
+		if _, err := FindCOMPort(cfg.Port); err != nil {
 			return nil, fmt.Errorf("cannot find %s: %w", cfg.Port, err)
 		}
-		fmt.Printf("Found: %s  —  %s\n", info.Port, info.FriendlyName)
-		fmt.Printf("       HW ID:    %s\n", info.HardwareID)
-		fmt.Printf("       Instance: %s\n\n", info.InstanceID)
-	} else {
-		ports, _ := EnumerateCOMPorts()
-		var lines []string
-		for _, p := range ports {
-			if isUSBDevice(p.HardwareID) {
-				lines = append(lines, fmt.Sprintf("  %-6s  %s", p.Port, p.FriendlyName))
-			}
-		}
-		if len(lines) > 0 {
-			fmt.Println("USB serial ports detected:")
-			fmt.Println(strings.Join(lines, "\n"))
-		}
-		fmt.Println()
 	}
 
 	return s, nil
@@ -129,10 +138,14 @@ func NewSniffer(cfg Config) (*Sniffer, error) {
 
 // Run tries USBPcap first; falls back to ETW if USBPcap is not installed.
 func (s *Sniffer) Run() error {
-	// Display goroutine — reads from pktCh and prints.
+	// Display goroutine — reads from pktCh, calls OnPacket callback or prints.
 	go func() {
 		for pkt := range s.pktCh {
-			s.display.Print(pkt)
+			if s.cfg.OnPacket != nil {
+				s.cfg.OnPacket(pkt)
+			} else if !s.cfg.Silent {
+				s.display.Print(pkt)
+			}
 		}
 	}()
 
@@ -142,10 +155,12 @@ func (s *Sniffer) Run() error {
 		return s.runUSBPcap(pcapDevs)
 	}
 
-	fmt.Println("[info] USBPcap not found — falling back to ETW (metadata only).")
-	fmt.Println("[info] For actual data capture with FTDI devices, install USBPcap:")
-	fmt.Println("[info]   https://desowin.org/usbpcap/")
-	fmt.Println()
+	if !s.cfg.Silent {
+		fmt.Println("[info] USBPcap not found — falling back to ETW (metadata only).")
+		fmt.Println("[info] For actual data capture with FTDI devices, install USBPcap:")
+		fmt.Println("[info]   https://desowin.org/usbpcap/")
+		fmt.Println()
+	}
 	return s.runETW()
 }
 
@@ -162,29 +177,35 @@ func (s *Sniffer) runUSBPcap(devs []string) error {
 
 			// Narrow to the hub serving this port.
 			if hub := FindUSBPcapForPort(s.cfg.Port, devs); hub != "" {
-				fmt.Printf("[info] %s mapped to hub %s\n", s.cfg.Port, hub)
+				if !s.cfg.Silent {
+					fmt.Printf("[info] %s mapped to hub %s\n", s.cfg.Port, hub)
+				}
 				devs = []string{hub}
-			} else {
+			} else if !s.cfg.Silent {
 				fmt.Println("[warn] hub detection failed — capturing all USBPcap devices")
 			}
 
 			// Get the real USB device address for per-device filtering.
 			if addr, err := FindUSBDeviceNumber(info.InstanceID); err == nil {
 				targetDevice = addr
-				fmt.Printf("[info] USB device address: %d\n", targetDevice)
-			} else {
+				if !s.cfg.Silent {
+					fmt.Printf("[info] USB device address: %d\n", targetDevice)
+				}
+			} else if !s.cfg.Silent {
 				fmt.Printf("[warn] USB device address lookup: %v\n", err)
 			}
 		}
 	}
-	if isFTDI {
+	if isFTDI && !s.cfg.Silent {
 		fmt.Println("[info] FTDI device — stripping 2-byte modem-status prefix from IN packets.")
 	}
 
 	// Strategy 1: spawn USBPcapCMD.exe (matches whatever driver version is installed).
 	if cmdExe := FindUSBPcapCMD(); cmdExe != "" {
-		fmt.Printf("[info] Using %s\n", cmdExe)
-		fmt.Println()
+		if !s.cfg.Silent {
+			fmt.Printf("[info] Using %s\n", cmdExe)
+			fmt.Println()
+		}
 		var started int
 		errCh := make(chan error, len(devs))
 		for _, dev := range devs {
@@ -203,8 +224,10 @@ func (s *Sniffer) runUSBPcap(devs []string) error {
 	}
 
 	// Strategy 2: direct overlapped API.
-	fmt.Printf("[info] USBPcapCMD.exe not found — trying direct API on %s\n", strings.Join(devs, ", "))
-	fmt.Println()
+	if !s.cfg.Silent {
+		fmt.Printf("[info] USBPcapCMD.exe not found — trying direct API on %s\n", strings.Join(devs, ", "))
+		fmt.Println()
+	}
 
 	var started int
 	errCh := make(chan error, len(devs))
@@ -283,7 +306,7 @@ func (s *Sniffer) handleETWRecord(r *EVENT_RECORD) {
 			s.handleKernelFile(r, id)
 		}
 	default:
-		if s.cfg.Verbose {
+		if s.cfg.Verbose && !s.cfg.Silent {
 			ts := etwTime(r.EventHeader.TimeStamp)
 			fmt.Printf("[%s] ETW id=%-4d PID=%-6d len=%d\n",
 				ts.Format("15:04:05.000"), id, r.EventHeader.ProcessId, r.UserDataLength)

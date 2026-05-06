@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>USB Sniffer</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0d1117;
+  --surf:     #161b22;
+  --surf2:    #21262d;
+  --border:   #30363d;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --blue:     #58a6ff;
+  --green:    #3fb950;
+  --orange:   #d29922;
+  --red:      #f85149;
+  --purple:   #bc8cff;
+  --in-bg:    rgba(63,185,80,.08);
+  --out-bg:   rgba(88,166,255,.08);
+  --in-border:#3fb95055;
+  --out-border:#58a6ff55;
+  --radius:   6px;
+  --font-mono: 'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
+}
+
+html, body { height: 100%; overflow: hidden; }
+body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+       background: var(--bg); color: var(--text); font-size: 13px; display: flex;
+       flex-direction: column; }
+
+/* ── Header ── */
+header {
+  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  height: 48px; background: var(--surf); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+header h1 { font-size: 14px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; }
+header h1 span { color: var(--blue); }
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--muted); transition: background .3s;
+}
+.status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
+#status-text { color: var(--muted); font-size: 12px; flex: 1; }
+
+.header-spacer { flex: 1; }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 8px 12px;
+  background: var(--surf); border-bottom: 1px solid var(--border); flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.toolbar-sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+
+select, input[type=text] {
+  background: var(--surf2); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: 12px; padding: 4px 8px; outline: none;
+  transition: border-color .15s;
+}
+select:focus, input[type=text]:focus { border-color: var(--blue); }
+select { cursor: pointer; }
+
+#port-select { min-width: 180px; }
+#search-input { width: 180px; }
+#search-input::placeholder { color: var(--muted); }
+
+button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+  border-radius: var(--radius); border: 1px solid var(--border); background: var(--surf2);
+  color: var(--text); font-size: 12px; cursor: pointer; font-family: inherit;
+  transition: background .12s, border-color .12s, opacity .12s; white-space: nowrap;
+}
+button:hover { background: var(--border); }
+button:active { opacity: .7; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+
+#btn-start  { border-color: var(--green); color: var(--green); }
+#btn-start:hover:not(:disabled)  { background: rgba(63,185,80,.15); }
+#btn-stop   { border-color: var(--red); color: var(--red); }
+#btn-stop:hover:not(:disabled)   { background: rgba(248,81,73,.15); }
+#btn-export { border-color: var(--blue); color: var(--blue); }
+#btn-export:hover { background: rgba(88,166,255,.12); }
+#btn-refresh { padding: 4px 7px; }
+
+.filter-group { display: flex; gap: 0; }
+.filter-group button {
+  border-radius: 0; border-right-width: 0; padding: 4px 9px;
+}
+.filter-group button:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.filter-group button:last-child  { border-radius: 0 var(--radius) var(--radius) 0; border-right-width: 1px; }
+.filter-group button.active { background: var(--blue); border-color: var(--blue); color: #000; font-weight: 600; }
+
+.toggle-btn { padding: 4px 10px; }
+.toggle-btn.active { background: var(--surf2); border-color: var(--blue); color: var(--blue); }
+
+/* ── Stats bar ── */
+.stats-bar {
+  display: flex; align-items: center; gap: 16px; padding: 4px 14px;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  font-size: 11px; color: var(--muted); flex-shrink: 0;
+}
+.stats-bar span b { color: var(--text); }
+.stats-in  b { color: var(--green); }
+.stats-out b { color: var(--blue); }
+.stats-bar .spacer { flex: 1; }
+#paused-badge {
+  background: var(--orange); color: #000; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 10px; display: none;
+}
+#paused-badge.visible { display: inline-block; }
+
+/* ── Packet list ── */
+#packet-list {
+  flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px;
+}
+#packet-list::-webkit-scrollbar { width: 6px; }
+#packet-list::-webkit-scrollbar-track { background: var(--bg); }
+#packet-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+#packet-list::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+.empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; color: var(--muted); gap: 8px; user-select: none;
+}
+.empty-state .icon { font-size: 36px; opacity: .4; }
+.empty-state p { font-size: 13px; }
+
+/* ── Packet card ── */
+.pkt {
+  border-radius: var(--radius); border: 1px solid var(--border);
+  overflow: hidden; animation: fadeIn .15s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+
+.pkt.in  { border-color: var(--in-border);  background: var(--in-bg); }
+.pkt.out { border-color: var(--out-border); background: var(--out-bg); }
+
+.pkt-header {
+  display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  cursor: pointer; user-select: none;
+}
+.pkt-header:hover { background: rgba(255,255,255,.03); }
+
+.badge {
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+  letter-spacing: .04em; flex-shrink: 0;
+}
+.badge.in  { background: rgba(63,185,80,.2);  color: var(--green); }
+.badge.out { background: rgba(88,166,255,.2); color: var(--blue); }
+
+.pkt-time { font-family: var(--font-mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.pkt-src  { font-size: 11px; color: var(--muted); flex: 1; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.pkt-size { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.pkt-toggle { margin-left: 4px; font-size: 10px; color: var(--muted);
+              flex-shrink: 0; transition: transform .15s; }
+.pkt.open .pkt-toggle { transform: rotate(180deg); }
+
+.hex-dump {
+  display: none; font-family: var(--font-mono); font-size: 11.5px;
+  line-height: 1.6; padding: 8px 12px; border-top: 1px solid var(--border);
+  color: var(--text); overflow-x: auto; white-space: pre;
+}
+.pkt.open .hex-dump { display: block; }
+
+.hex-addr   { color: var(--muted); }
+.hex-bytes  { color: var(--text); }
+.hex-sep    { color: var(--border); }
+.hex-ascii  { color: var(--purple); }
+
+/* search highlight */
+.pkt.hidden { display: none; }
+
+/* ── Scrollbar hide for Firefox ── */
+#packet-list { scrollbar-width: thin; scrollbar-color: var(--border) var(--bg); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="status-dot" id="status-dot"></div>
+  <h1>USB <span>Sniffer</span></h1>
+  <span id="status-text">Disconnected</span>
+</header>
+
+<div class="toolbar">
+  <select id="port-select" title="COM port to monitor">
+    <option value="">— select port —</option>
+  </select>
+  <button id="btn-refresh" title="Refresh port list">&#x21bb;</button>
+  <button id="btn-start" title="Start capture">&#x25B6; Start</button>
+  <button id="btn-stop"  title="Stop capture" disabled>&#x25A0; Stop</button>
+
+  <div class="toolbar-sep"></div>
+
+  <div class="filter-group" id="dir-filter">
+    <button class="active" data-dir="all">ALL</button>
+    <button data-dir="in">IN</button>
+    <button data-dir="out">OUT</button>
+  </div>
+
+  <input type="text" id="search-input" placeholder="&#x1F50D; search hex / ASCII&hellip;" title="Filter packets by content">
+
+  <div class="toolbar-sep"></div>
+
+  <button class="toggle-btn active" id="btn-autoscroll" title="Auto-scroll to newest packet">&#x2193; Auto-scroll</button>
+  <button class="toggle-btn" id="btn-pause" title="Pause display (capture continues)">&#x23F8; Pause</button>
+  <button id="btn-clear" title="Clear packet list">&#x1F5D1; Clear</button>
+
+  <div class="toolbar-sep"></div>
+
+  <button id="btn-export" title="Export all packets as text">&#x2B07; Export</button>
+</div>
+
+<div class="stats-bar">
+  <span>Total <b id="st-total">0</b></span>
+  <span class="stats-in">IN  <b id="st-in">0</b></span>
+  <span class="stats-out">OUT <b id="st-out">0</b></span>
+  <span>Shown <b id="st-shown">0</b></span>
+  <div class="spacer"></div>
+  <span id="paused-badge">PAUSED</span>
+</div>
+
+<div id="packet-list">
+  <div class="empty-state" id="empty-state">
+    <div class="icon">&#x1F50C;</div>
+    <p>Select a COM port and click <b>Start</b> to begin capture.</p>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────────────────
+const MAX_PACKETS = 2000;
+let packets = [];          // all received packets (up to MAX_PACKETS)
+let paused  = false;
+let queue   = [];          // packets received while paused
+let dirFilter  = 'all';
+let searchTerm = '';
+let autoScroll = true;
+let running    = false;
+let capturePort = '';
+
+let stats = { total: 0, in: 0, out: 0 };
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const portSelect   = document.getElementById('port-select');
+const btnStart     = document.getElementById('btn-start');
+const btnStop      = document.getElementById('btn-stop');
+const btnRefresh   = document.getElementById('btn-refresh');
+const btnExport    = document.getElementById('btn-export');
+const btnClear     = document.getElementById('btn-clear');
+const btnPause     = document.getElementById('btn-pause');
+const btnAutoscroll= document.getElementById('btn-autoscroll');
+const searchInput  = document.getElementById('search-input');
+const packetList   = document.getElementById('packet-list');
+const emptyState   = document.getElementById('empty-state');
+const statusDot    = document.getElementById('status-dot');
+const statusText   = document.getElementById('status-text');
+const pausedBadge  = document.getElementById('paused-badge');
+const stTotal      = document.getElementById('st-total');
+const stIn         = document.getElementById('st-in');
+const stOut        = document.getElementById('st-out');
+const stShown      = document.getElementById('st-shown');
+
+// ── Hex formatting ─────────────────────────────────────────────────────────
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function formatHexDump(bytes) {
+  const rows = [];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const row = bytes.slice(i, i + 16);
+    const addr = i.toString(16).padStart(8, '0');
+    const h1 = Array.from(row.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    const h2 = Array.from(row.slice(8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    const ascii = Array.from(row).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+    const h1p = h1.padEnd(23, ' ');
+    const h2p = h2.padEnd(23, ' ');
+    rows.push(`<span class="hex-addr">${addr}</span>  <span class="hex-bytes">${h1p}  ${h2p}</span>  <span class="hex-sep">|</span><span class="hex-ascii">${escHtml(ascii)}</span><span class="hex-sep">|</span>`);
+  }
+  return rows.join('\n');
+}
+
+function formatHexDumpPlain(bytes) {
+  const rows = [];
+  for (let i = 0; i < bytes.length; i += 16) {
+    const row = bytes.slice(i, i + 16);
+    const addr = i.toString(16).padStart(8, '0');
+    const h1 = Array.from(row.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    const h2 = Array.from(row.slice(8)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    const ascii = Array.from(row).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+    rows.push(`${addr}  ${h1.padEnd(23)}  ${h2.padEnd(23)}  |${ascii}|`);
+  }
+  return rows.join('\n');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Packet matching ────────────────────────────────────────────────────────
+function pktMatchesFilter(pkt) {
+  if (dirFilter !== 'all' && pkt.dir !== dirFilter) return false;
+  if (!searchTerm) return true;
+  const term = searchTerm.toLowerCase();
+  const bytes = b64ToBytes(pkt.b64);
+  // search in hex dump text
+  const hexStr = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join(' ');
+  if (hexStr.includes(term)) return true;
+  // search in ASCII
+  const ascii = Array.from(bytes).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('').toLowerCase();
+  if (ascii.includes(term)) return true;
+  // search in source/time
+  if (pkt.src.toLowerCase().includes(term)) return true;
+  return false;
+}
+
+// ── Build packet DOM element ───────────────────────────────────────────────
+function buildPktEl(pkt, index) {
+  const el = document.createElement('div');
+  el.className = `pkt ${pkt.dir}`;
+  el.dataset.index = index;
+
+  const dirLabel = pkt.dir === 'in' ? 'DEV→HOST' : 'HOST→DEV';
+  const bytes = b64ToBytes(pkt.b64);
+  const hexHtml = formatHexDump(bytes);
+
+  el.innerHTML = `
+    <div class="pkt-header">
+      <span class="badge ${pkt.dir}">${dirLabel}</span>
+      <span class="pkt-time">${pkt.t}</span>
+      <span class="pkt-src">${escHtml(pkt.src)}</span>
+      <span class="pkt-size">${pkt.n} B</span>
+      <span class="pkt-toggle">&#x25BC;</span>
+    </div>
+    <pre class="hex-dump">${hexHtml}</pre>`;
+
+  el.querySelector('.pkt-header').addEventListener('click', () => {
+    el.classList.toggle('open');
+  });
+
+  return el;
+}
+
+// ── Render / update list ───────────────────────────────────────────────────
+let shownCount = 0;
+
+function appendPacket(pkt) {
+  // Trim if over max
+  if (packets.length >= MAX_PACKETS) {
+    packets.shift();
+    const first = packetList.querySelector('.pkt');
+    if (first) first.remove();
+  }
+  packets.push(pkt);
+
+  const idx = packets.length - 1;
+  const matches = pktMatchesFilter(pkt);
+  const el = buildPktEl(pkt, idx);
+  if (!matches) el.classList.add('hidden');
+  else shownCount++;
+
+  // Remove empty state
+  if (emptyState.parentNode === packetList) packetList.removeChild(emptyState);
+  packetList.appendChild(el);
+
+  updateStats();
+
+  if (autoScroll && matches) {
+    el.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }
+}
+
+function refilter() {
+  shownCount = 0;
+  const pktEls = packetList.querySelectorAll('.pkt');
+  pktEls.forEach((el, i) => {
+    const idx = parseInt(el.dataset.index, 10);
+    if (idx >= 0 && idx < packets.length) {
+      const matches = pktMatchesFilter(packets[idx]);
+      el.classList.toggle('hidden', !matches);
+      if (matches) shownCount++;
+    }
+  });
+  updateStats();
+}
+
+function updateStats() {
+  stTotal.textContent = stats.total;
+  stIn.textContent    = stats.in;
+  stOut.textContent   = stats.out;
+  stShown.textContent = shownCount;
+}
+
+function clearPackets() {
+  packets = [];
+  queue   = [];
+  stats   = { total: 0, in: 0, out: 0 };
+  shownCount = 0;
+  while (packetList.firstChild) packetList.removeChild(packetList.firstChild);
+  packetList.appendChild(emptyState);
+  updateStats();
+}
+
+// ── Handle incoming packet ─────────────────────────────────────────────────
+function handlePacket(msg) {
+  stats.total++;
+  if (msg.dir === 'in')  stats.in++;
+  else                   stats.out++;
+
+  if (paused) {
+    queue.push(msg);
+    updateStats();
+    return;
+  }
+  appendPacket(msg);
+}
+
+function flushQueue() {
+  while (queue.length > 0) {
+    appendPacket(queue.shift());
+  }
+}
+
+// ── Status handling ────────────────────────────────────────────────────────
+function setStatus(isRunning, port, msg) {
+  running = isRunning;
+  capturePort = port || '';
+  statusDot.classList.toggle('running', isRunning);
+  if (isRunning) {
+    statusText.textContent = `Capturing${port ? ' — ' + port : ''}`;
+  } else if (msg) {
+    statusText.textContent = 'Error: ' + msg;
+  } else {
+    statusText.textContent = 'Idle';
+  }
+  btnStart.disabled = isRunning;
+  btnStop.disabled  = !isRunning;
+  portSelect.disabled = isRunning;
+  btnRefresh.disabled = isRunning;
+}
+
+// ── Port list ──────────────────────────────────────────────────────────────
+async function loadPorts() {
+  portSelect.disabled = true;
+  try {
+    const resp = await fetch('/api/ports');
+    const ports = await resp.json();
+    const prev = portSelect.value;
+    portSelect.innerHTML = '<option value="">— select port —</option>';
+    (ports || []).forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.port;
+      opt.textContent = p.usb ? `${p.port}  —  ${p.name}` : p.port;
+      portSelect.appendChild(opt);
+    });
+    if (prev) portSelect.value = prev;
+  } catch (e) {
+    console.error('port list error:', e);
+  } finally {
+    if (!running) portSelect.disabled = false;
+  }
+}
+
+// ── Start / Stop ───────────────────────────────────────────────────────────
+async function startCapture() {
+  const port = portSelect.value;
+  try {
+    const resp = await fetch('/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ port })
+    });
+    if (!resp.ok) {
+      const txt = await resp.text();
+      statusText.textContent = 'Start failed: ' + txt;
+    }
+  } catch(e) {
+    statusText.textContent = 'Start error: ' + e;
+  }
+}
+
+async function stopCapture() {
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+  } catch(e) {
+    console.error('stop error:', e);
+  }
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+function connectSSE() {
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type === 'status') {
+      setStatus(msg.running, msg.port, msg.msg);
+    } else if (msg.type === 'packet') {
+      handlePacket(msg);
+    }
+  };
+  es.onerror = () => {
+    statusDot.classList.remove('running');
+    statusText.textContent = 'Reconnecting…';
+    // EventSource reconnects automatically
+  };
+}
+
+// ── Toolbar events ─────────────────────────────────────────────────────────
+btnRefresh.addEventListener('click', loadPorts);
+btnStart.addEventListener('click', startCapture);
+btnStop.addEventListener('click', stopCapture);
+btnClear.addEventListener('click', clearPackets);
+
+btnPause.addEventListener('click', () => {
+  paused = !paused;
+  btnPause.classList.toggle('active', paused);
+  pausedBadge.classList.toggle('visible', paused);
+  if (!paused) flushQueue();
+});
+
+btnAutoscroll.addEventListener('click', () => {
+  autoScroll = !autoScroll;
+  btnAutoscroll.classList.toggle('active', autoScroll);
+});
+
+// Direction filter
+document.getElementById('dir-filter').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-dir]');
+  if (!btn) return;
+  dirFilter = btn.dataset.dir;
+  document.querySelectorAll('#dir-filter button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  refilter();
+});
+
+// Search
+let searchTimer;
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchTerm = searchInput.value.trim();
+    refilter();
+  }, 200);
+});
+
+// ── Export ─────────────────────────────────────────────────────────────────
+btnExport.addEventListener('click', () => {
+  if (packets.length === 0) { alert('No packets to export.'); return; }
+
+  const lines = [];
+  lines.push('USB Sniffer Export');
+  lines.push('Generated: ' + new Date().toISOString());
+  if (capturePort) lines.push('Port: ' + capturePort);
+  lines.push('Total packets: ' + packets.length);
+  lines.push('');
+
+  packets.forEach((pkt, i) => {
+    if (dirFilter !== 'all' && pkt.dir !== dirFilter) return;
+    const dirLabel = pkt.dir === 'in' ? 'DEV→HOST' : 'HOST→DEV';
+    lines.push(`── Packet #${i + 1}  ${pkt.t}  ${dirLabel}  ${pkt.n} bytes  [${pkt.src}]`);
+    const bytes = b64ToBytes(pkt.b64);
+    lines.push(formatHexDumpPlain(bytes));
+    lines.push('');
+  });
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `usb-sniff-${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadPorts();
+connectSSE();
+</script>
+</body>
+</html>
