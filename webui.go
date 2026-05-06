@@ -23,6 +23,9 @@ var indexHTML []byte
 //go:embed static/shekel.jpg
 var shekelLogo []byte
 
+//go:embed static/favicon.png
+var faviconPNG []byte
+
 // ─── SSE broadcaster ──────────────────────────────────────────────────────
 
 type broker struct {
@@ -287,6 +290,11 @@ func RunWebUI() error {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Cache-Control", "public, max-age=86400")
 		w.Write(shekelLogo)
+	})
+	mux.HandleFunc("/favicon.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(faviconPNG)
 	})
 	mux.HandleFunc("/api/ports", ws.handlePorts)
 	mux.HandleFunc("/api/start", ws.handleStart)
