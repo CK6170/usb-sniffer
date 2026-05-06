@@ -179,14 +179,21 @@ func (ws *WebServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ws.broadcastStatus(true, req.Port, "")
 		runErr := sniffer.Run()
+		// Only update state if this goroutine's sniffer is still current
+		// (handleStop may have already cleared it; a new capture may be running).
 		ws.mu.Lock()
-		ws.running = false
-		ws.sniffer = nil
+		isCurrent := ws.sniffer == sniffer
+		if isCurrent {
+			ws.running = false
+			ws.sniffer = nil
+		}
 		ws.mu.Unlock()
-		if runErr != nil {
-			ws.broadcastStatus(false, "", runErr.Error())
-		} else {
-			ws.broadcastStatus(false, "", "")
+		if isCurrent {
+			errMsg := ""
+			if runErr != nil {
+				errMsg = runErr.Error()
+			}
+			ws.broadcastStatus(false, "", errMsg)
 		}
 	}()
 
@@ -199,12 +206,19 @@ func (ws *WebServer) handleStop(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	// Optimistically clear running state so Start is immediately re-enabled,
+	// even before Run() returns (it blocks until the subprocess exits).
 	ws.mu.Lock()
 	s := ws.sniffer
+	ws.sniffer = nil
+	ws.running = false
 	ws.mu.Unlock()
+
 	if s != nil {
 		s.Close()
 	}
+	ws.broadcastStatus(false, "", "")
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }

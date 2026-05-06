@@ -117,7 +117,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ── Packet list ── */
 #packet-list {
-  flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px;
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding: 8px; display: flex; flex-direction: column; gap: 4px;
 }
 #packet-list::-webkit-scrollbar { width: 6px; }
 #packet-list::-webkit-scrollbar-track { background: var(--bg); }
@@ -135,6 +136,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .pkt {
   border-radius: var(--radius); border: 1px solid var(--border);
   overflow: hidden; animation: fadeIn .15s ease;
+  min-width: 0; max-width: 100%; flex-shrink: 0;
 }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
 
@@ -159,15 +161,17 @@ button:disabled { opacity: .4; cursor: not-allowed; }
             text-overflow: ellipsis; white-space: nowrap; }
 .pkt-size { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .pkt-toggle { margin-left: 4px; font-size: 10px; color: var(--muted);
-              flex-shrink: 0; transition: transform .15s; }
-.pkt.open .pkt-toggle { transform: rotate(180deg); }
+              flex-shrink: 0; transition: transform .15s;
+              transform: rotate(180deg); } /* default: ▲ = expanded */
+.pkt.closed .pkt-toggle { transform: rotate(0deg); } /* closed: ▼ = collapsed */
 
 .hex-dump {
-  display: none; font-family: var(--font-mono); font-size: 11.5px;
+  /* shown by default; hidden when card is .closed */
+  display: block; font-family: var(--font-mono); font-size: 11.5px;
   line-height: 1.6; padding: 8px 12px; border-top: 1px solid var(--border);
-  color: var(--text); overflow-x: auto; white-space: pre;
+  color: var(--text); overflow-x: auto; white-space: pre; max-width: 100%;
 }
-.pkt.open .hex-dump { display: block; }
+.pkt.closed .hex-dump { display: none; }
 
 .hex-addr   { color: var(--muted); }
 .hex-bytes  { color: var(--text); }
@@ -330,7 +334,7 @@ function pktMatchesFilter(pkt) {
 // ── Build packet DOM element ───────────────────────────────────────────────
 function buildPktEl(pkt, index) {
   const el = document.createElement('div');
-  el.className = `pkt ${pkt.dir}`;
+  el.className = `pkt ${pkt.dir}`;   // default: expanded (no 'closed' class)
   el.dataset.index = index;
 
   const dirLabel = pkt.dir === 'in' ? 'DEV→HOST' : 'HOST→DEV';
@@ -348,7 +352,7 @@ function buildPktEl(pkt, index) {
     <pre class="hex-dump">${hexHtml}</pre>`;
 
   el.querySelector('.pkt-header').addEventListener('click', () => {
-    el.classList.toggle('open');
+    el.classList.toggle('closed');   // toggle collapsed state
   });
 
   return el;
@@ -379,7 +383,7 @@ function appendPacket(pkt) {
   updateStats();
 
   if (autoScroll && matches) {
-    el.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    packetList.scrollTop = packetList.scrollHeight;
   }
 }
 
