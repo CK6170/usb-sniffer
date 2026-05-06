@@ -625,7 +625,7 @@ btnExport.addEventListener('click', () => {
 
   const out = {
     exported: new Date().toISOString(),
-    port:     capturePort || null,
+    port:     capturePort || 'all devices',
     filter:   dirFilter,
     total:    filtered.length,
     packets:  filtered.map((pkt, i) => {
@@ -641,7 +641,7 @@ btnExport.addEventListener('click', () => {
         size:      pkt.n,
         hex:       hexStr,
         ascii:     asciiStr,
-        data:      pkt.b64,
+        base64:    pkt.b64,
       };
     }),
   };
