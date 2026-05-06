@@ -20,6 +20,9 @@ import (
 //go:embed static/index.html
 var indexHTML []byte
 
+//go:embed static/shekel.jpg
+var shekelLogo []byte
+
 // ─── SSE broadcaster ──────────────────────────────────────────────────────
 
 type broker struct {
@@ -280,6 +283,11 @@ func RunWebUI() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", ws.handleIndex)
+	mux.HandleFunc("/shekel.jpg", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(shekelLogo)
+	})
 	mux.HandleFunc("/api/ports", ws.handlePorts)
 	mux.HandleFunc("/api/start", ws.handleStart)
 	mux.HandleFunc("/api/stop", ws.handleStop)
