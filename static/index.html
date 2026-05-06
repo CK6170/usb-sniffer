@@ -619,27 +619,38 @@ searchInput.addEventListener('input', () => {
 btnExport.addEventListener('click', () => {
   if (packets.length === 0) { alert('No packets to export.'); return; }
 
-  const lines = [];
-  lines.push('USB Sniffer Export');
-  lines.push('Generated: ' + new Date().toISOString());
-  if (capturePort) lines.push('Port: ' + capturePort);
-  lines.push('Total packets: ' + packets.length);
-  lines.push('');
+  const filtered = packets.filter((_, i) =>
+    dirFilter === 'all' || packets[i].dir === dirFilter
+  );
 
-  packets.forEach((pkt, i) => {
-    if (dirFilter !== 'all' && pkt.dir !== dirFilter) return;
-    const dirLabel = pkt.dir === 'in' ? 'DEV→HOST' : 'HOST→DEV';
-    lines.push(`── Packet #${i + 1}  ${pkt.t}  ${dirLabel}  ${pkt.n} bytes  [${pkt.src}]`);
-    const bytes = b64ToBytes(pkt.b64);
-    lines.push(formatHexDumpPlain(bytes));
-    lines.push('');
-  });
+  const out = {
+    exported: new Date().toISOString(),
+    port:     capturePort || null,
+    filter:   dirFilter,
+    total:    filtered.length,
+    packets:  filtered.map((pkt, i) => {
+      const bytes = b64ToBytes(pkt.b64);
+      const hexStr = Array.from(bytes)
+        .map(b => b.toString(16).padStart(2, '0')).join(' ');
+      const asciiStr = Array.from(bytes).map(byteToAsciiPlain).join('');
+      return {
+        n:         i + 1,
+        time:      pkt.t,
+        direction: pkt.dir === 'in' ? 'DEV→HOST' : 'HOST→DEV',
+        source:    pkt.src,
+        size:      pkt.n,
+        hex:       hexStr,
+        ascii:     asciiStr,
+        data:      pkt.b64,
+      };
+    }),
+  };
 
-  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `usb-sniff-${new Date().toISOString().replace(/[:.]/g,'-')}.txt`;
+  const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `usb-sniff-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   a.click();
   URL.revokeObjectURL(url);
 });
