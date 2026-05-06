@@ -1,0 +1,9 @@
+# Compiled binaries
+*.exe
+
+# Test artifacts
+test_admin_out.txt
+run_test_admin.bat
+
+# Go test binary
+*_bin.exe
